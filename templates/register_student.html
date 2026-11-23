@@ -1,0 +1,181 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Daftarkan Siswa</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a;
+    }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 24px; }
+    .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 8px 24px rgba(15,23,42,0.08); margin-bottom: 18px; }
+    h2 { margin-top: 0; }
+    label { display: block; margin-bottom: 6px; font-weight: 700; }
+    input, button { width: 100%; padding: 12px; margin-top: 8px; margin-bottom: 12px; border-radius: 8px; border: 1px solid #cbd5e1; }
+    button { background: #2563eb; color: white; border: none; cursor: pointer; font-weight: 700; }
+    video, canvas { width: 100%; max-width: 480px; border-radius: 12px; border: 1px solid #cbd5e1; }
+    .error { color: #dc2626; margin-bottom: 10px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+      <h2 style="margin:0;">Daftarkan Siswa</h2>
+      <div>
+        <a href="{{ url_for('dashboard') }}" style="color:#2563eb; text-decoration:none; font-weight:700; margin-right:12px;">Dashboard</a>
+        <a href="{{ url_for('attendance') }}" style="color:#2563eb; text-decoration:none; font-weight:700;">Absensi</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Daftarkan Siswa</h2>
+      {% if error %}<div class="error">{{ error }}</div>{% endif %}
+      <form method="post">
+        <label>Student ID</label>
+        <input type="text" name="student_id" value="{{ student_id or '' }}" required>
+        <label>Nama Siswa</label>
+        <input type="text" name="name" value="{{ student_name or '' }}" required>
+        <button type="submit">Simpan Data Siswa</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Ambil Foto Wajah</h3>
+      <p style="margin-top:0;">Ikuti instruksi berikut untuk mengumpulkan data wajah yang lebih beragam.</p>
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas" style="display:none"></canvas>
+      <div id="instructionBox" style="margin:12px 0; padding:12px; background:#eff6ff; border-radius:10px; font-weight:700; color:#1d4ed8;"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+        <button id="startCameraBtn" type="button" style="background:#16a34a;">Mulai Kamera</button>
+        <button id="captureBtn" type="button" onclick="captureFace()" style="margin-top: 0;">Mulai Pengumpulan Data</button>
+      </div>
+      <p id="status"></p>
+      <p id="progress" style="font-weight:700; color:#2563eb;"></p>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const status = document.getElementById('status');
+    const progress = document.getElementById('progress');
+    const instructionBox = document.getElementById('instructionBox');
+
+    const captureButton = document.getElementById('captureBtn');
+    const startBtn = document.getElementById('startCameraBtn');
+
+    let stream = null;
+    let streamActive = false;
+
+    async function startCamera() {
+      if (streamActive) return true;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        status.textContent = 'Browser tidak mendukung akses kamera.';
+        return false;
+      }
+      status.textContent = 'Meminta izin kamera...';
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user',
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        streamActive = true;
+        status.textContent = 'Kamera aktif';
+        return true;
+      } catch (err) {
+        console.error(err);
+        status.textContent = 'Gagal mengakses kamera: ' + (err.message || err.name);
+        return false;
+      }
+    }
+
+    startBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await startCamera();
+    });
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function captureFace() {
+      if (!streamActive) {
+        const ok = await startCamera();
+        if (!ok) return;
+        await sleep(600);
+      }
+
+      captureButton.disabled = true;
+      const totalSamples = 300;
+      const context = canvas.getContext('2d');
+
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+
+      status.textContent = 'Mengambil data wajah...';
+      progress.textContent = `0/${totalSamples}`;
+
+      try {
+        instructionBox.textContent = 'Posisikan wajah di tengah kamera dan tetap tenang';
+        let savedCount = 0;
+        let attempts = 0;
+        const maxAttempts = 1000;
+
+        while (savedCount < totalSamples && attempts < maxAttempts) {
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = canvas.toDataURL('image/jpeg', 0.75);
+
+          const response = await fetch('{{ url_for("capture_student_face") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: imageData, target_samples: totalSamples, capture_mode: 'diverse' })
+          });
+          const data = await response.json();
+          attempts += 1;
+
+          if (response.ok && data.status === 'ok') {
+            savedCount = data.total_count || savedCount;
+            progress.textContent = `${savedCount}/${totalSamples}`;
+            status.textContent = data.message || `Tersimpan ${savedCount}/${totalSamples}`;
+          } else {
+            status.textContent = data.message || 'Wajah tidak terdeteksi. Posisikan wajah di tengah kamera.';
+          }
+
+          await sleep(120);
+        }
+
+        if (savedCount < totalSamples) {
+          status.textContent = `Proses selesai. Tersimpan ${savedCount}/${totalSamples} gambar.`;
+        } else {
+          status.textContent = `Target tercapai. Tersimpan ${savedCount}/${totalSamples} gambar.`;
+        }
+      } catch (error) {
+        console.error(error);
+        status.textContent = 'Gagal mengirim data wajah.';
+      } finally {
+        instructionBox.textContent = 'Siap mengambil data wajah';
+        captureButton.disabled = false;
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        streamActive = false;
+        video.srcObject = null;
+        status.textContent = 'Kamera dimatikan';
+      }
+    }
+
+    window.addEventListener('beforeunload', stopCamera);
+  </script>
+</body>
+</html>
